@@ -13,6 +13,36 @@ const GeodesicNetwork = ({ radius = 1.5 }: { radius?: number }) => {
   const pointsRef = useRef<THREE.Group>(null);
   const linesRef = useRef<THREE.Group>(null);
   
+  // Generate geodesic curve points between two points on sphere surface
+  const generateGeodesicCurve = (point1: THREE.Vector3, point2: THREE.Vector3, segments = 20) => {
+    const points: THREE.Vector3[] = [];
+    
+    for (let i = 0; i <= segments; i++) {
+      const t = i / segments;
+      
+      // Spherical linear interpolation (slerp) for great circle
+      const angle = point1.angleTo(point2);
+      const sinAngle = Math.sin(angle);
+      
+      if (sinAngle === 0) {
+        // Points are identical or antipodal
+        points.push(point1.clone());
+        continue;
+      }
+      
+      const a = Math.sin((1 - t) * angle) / sinAngle;
+      const b = Math.sin(t * angle) / sinAngle;
+      
+      const interpolated = point1.clone().multiplyScalar(a).add(point2.clone().multiplyScalar(b));
+      
+      // Project back to sphere surface
+      interpolated.normalize().multiplyScalar(radius);
+      points.push(interpolated);
+    }
+    
+    return points;
+  };
+
   // Generate random points on sphere surface and create network
   const network = useMemo(() => {
     const numPoints = 12;
@@ -35,7 +65,7 @@ const GeodesicNetwork = ({ radius = 1.5 }: { radius?: number }) => {
       });
     }
     
-    // Find nearest neighbors for each point (connect to 3-4 closest points)
+    // Create Voronoi-like connections with varied polygon shapes
     points.forEach((point, i) => {
       const distances = points
         .map((otherPoint, j) => ({
@@ -45,11 +75,12 @@ const GeodesicNetwork = ({ radius = 1.5 }: { radius?: number }) => {
         .filter(d => d.index !== i)
         .sort((a, b) => a.distance - b.distance);
       
-      // Connect to 3 nearest neighbors
-      point.neighbors = distances.slice(0, 3).map(d => d.index);
+      // Vary the number of connections (3-5) to create different polygon shapes
+      const numConnections = 3 + Math.floor(Math.random() * 3); // 3, 4, or 5 connections
+      point.neighbors = distances.slice(0, numConnections).map(d => d.index);
     });
     
-    // Create line segments for connections
+    // Create geodesic curve segments for connections
     const lineGeometry = new THREE.BufferGeometry();
     const linePositions: number[] = [];
     const lineColors: number[] = [];
@@ -60,18 +91,29 @@ const GeodesicNetwork = ({ radius = 1.5 }: { radius?: number }) => {
         if (i < neighborIndex) {
           const neighbor = points[neighborIndex];
           
-          // Add line segment
-          linePositions.push(
-            point.position.x, point.position.y, point.position.z,
-            neighbor.position.x, neighbor.position.y, neighbor.position.z
-          );
+          // Generate geodesic curve between points
+          const curvePoints = generateGeodesicCurve(point.position, neighbor.position, 15);
           
-          // Use average color for the line
-          const avgColor = new THREE.Color().addColors(point.color, neighbor.color).multiplyScalar(0.5);
-          lineColors.push(
-            avgColor.r, avgColor.g, avgColor.b,
-            avgColor.r, avgColor.g, avgColor.b
-          );
+          // Add curve segments
+          for (let j = 0; j < curvePoints.length - 1; j++) {
+            const p1 = curvePoints[j];
+            const p2 = curvePoints[j + 1];
+            
+            linePositions.push(
+              p1.x, p1.y, p1.z,
+              p2.x, p2.y, p2.z
+            );
+            
+            // Use average color for the line with some variation along the curve
+            const baseColor = new THREE.Color().addColors(point.color, neighbor.color).multiplyScalar(0.5);
+            const variation = 0.1 * Math.sin(j * 0.5); // Subtle color variation along curve
+            const curveColor = baseColor.clone().offsetHSL(0, 0, variation);
+            
+            lineColors.push(
+              curveColor.r, curveColor.g, curveColor.b,
+              curveColor.r, curveColor.g, curveColor.b
+            );
+          }
         }
       });
     });
@@ -102,7 +144,7 @@ const GeodesicNetwork = ({ radius = 1.5 }: { radius?: number }) => {
         ))}
       </group>
       
-      {/* Render connecting lines */}
+      {/* Render connecting geodesic curves */}
       <group ref={linesRef}>
         <lineSegments>
           <bufferGeometry attach="geometry" {...network.lineGeometry} />
