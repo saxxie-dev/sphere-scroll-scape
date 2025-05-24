@@ -43,16 +43,15 @@ const GeodesicNetwork = ({ radius = 1.5 }: { radius?: number }) => {
     return points;
   };
 
-  // Generate random points on sphere surface and create network
-  const network = useMemo(() => {
-    const numPoints = 12;
+  // Generate evenly distributed points using Fibonacci sphere algorithm
+  const generateFibonacciSphere = (numPoints: number) => {
     const points: Point[] = [];
+    const goldenRatio = (1 + Math.sqrt(5)) / 2;
     
-    // Generate random points on sphere surface
     for (let i = 0; i < numPoints; i++) {
-      // Use spherical coordinates to get uniform distribution
-      const theta = Math.random() * Math.PI * 2; // 0 to 2π
-      const phi = Math.acos(1 - 2 * Math.random()); // 0 to π (uniform distribution)
+      // Use Fibonacci spiral for even distribution
+      const theta = 2 * Math.PI * i / goldenRatio;
+      const phi = Math.acos(1 - 2 * (i + 0.5) / numPoints);
       
       const x = radius * Math.sin(phi) * Math.cos(theta);
       const y = radius * Math.sin(phi) * Math.sin(theta);
@@ -61,9 +60,17 @@ const GeodesicNetwork = ({ radius = 1.5 }: { radius?: number }) => {
       points.push({
         position: new THREE.Vector3(x, y, z),
         neighbors: [],
-        color: new THREE.Color().setHSL(Math.random(), 0.7, 0.6)
+        color: new THREE.Color().setHSL(i / numPoints, 0.7, 0.6)
       });
     }
+    
+    return points;
+  };
+
+  // Generate evenly distributed points and create network
+  const network = useMemo(() => {
+    const numPoints = 12;
+    const points = generateFibonacciSphere(numPoints);
     
     // Create Voronoi-like connections with varied polygon shapes
     points.forEach((point, i) => {
