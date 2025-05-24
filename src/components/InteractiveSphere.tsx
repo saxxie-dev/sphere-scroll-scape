@@ -3,6 +3,7 @@ import { useRef, useState } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
+import GeodesicNetwork from './GeodesicNetwork';
 
 const AnimatedSphere = () => {
   const meshRef = useRef<THREE.Mesh>(null);
@@ -22,6 +23,8 @@ const AnimatedSphere = () => {
         roughness={0.3}
         metalness={0.7}
         wireframe={false}
+        transparent={true}
+        opacity={0.3}
       />
     </mesh>
   );
@@ -47,8 +50,11 @@ const Scene = () => {
         color="#ffffff"
       />
       
-      {/* The animated sphere */}
+      {/* The animated sphere (now semi-transparent) */}
       <AnimatedSphere />
+      
+      {/* The geodesic network */}
+      <GeodesicNetwork radius={1.5} />
       
       {/* Orbit controls with bounded zoom */}
       <OrbitControls
