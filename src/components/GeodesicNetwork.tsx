@@ -12,6 +12,7 @@ interface Point {
 const GeodesicNetwork = ({ radius = 1.5 }: { radius?: number }) => {
   const pointsRef = useRef<THREE.Group>(null);
   const linesRef = useRef<THREE.Group>(null);
+  const facesRef = useRef<THREE.Group>(null);
   
   // Generate geodesic curve points between two points on sphere surface
   const generateGeodesicCurve = (point1: THREE.Vector3, point2: THREE.Vector3, segments = 20) => {
@@ -92,7 +93,49 @@ const GeodesicNetwork = ({ radius = 1.5 }: { radius?: number }) => {
     const linePositions: number[] = [];
     const lineColors: number[] = [];
     
+    // Create polygon faces
+    const faceGeometries: { geometry: THREE.BufferGeometry; color: THREE.Color }[] = [];
+    
     points.forEach((point, i) => {
+      // Create polygon face for each point's neighborhood
+      if (point.neighbors.length >= 3) {
+        const faceVertices: number[] = [];
+        const faceColors: number[] = [];
+        
+        // Sort neighbors by angle around the point to create proper polygon
+        const neighborPositions = point.neighbors.map(ni => ({
+          index: ni,
+          position: points[ni].position.clone().sub(point.position).normalize()
+        }));
+        
+        // Create triangulated face from center point to neighbors
+        for (let j = 0; j < point.neighbors.length; j++) {
+          const nextJ = (j + 1) % point.neighbors.length;
+          const neighbor1 = points[point.neighbors[j]];
+          const neighbor2 = points[point.neighbors[nextJ]];
+          
+          // Triangle: center -> neighbor1 -> neighbor2
+          faceVertices.push(
+            point.position.x, point.position.y, point.position.z,
+            neighbor1.position.x, neighbor1.position.y, neighbor1.position.z,
+            neighbor2.position.x, neighbor2.position.y, neighbor2.position.z
+          );
+          
+          // Use point's color for the entire face
+          for (let k = 0; k < 3; k++) {
+            faceColors.push(point.color.r, point.color.g, point.color.b);
+          }
+        }
+        
+        const faceGeometry = new THREE.BufferGeometry();
+        faceGeometry.setAttribute('position', new THREE.Float32BufferAttribute(faceVertices, 3));
+        faceGeometry.setAttribute('color', new THREE.Float32BufferAttribute(faceColors, 3));
+        faceGeometry.computeVertexNormals();
+        
+        faceGeometries.push({ geometry: faceGeometry, color: point.color });
+      }
+      
+      // Create lines
       point.neighbors.forEach(neighborIndex => {
         // Avoid duplicate lines by only drawing from lower to higher index
         if (i < neighborIndex) {
@@ -128,24 +171,41 @@ const GeodesicNetwork = ({ radius = 1.5 }: { radius?: number }) => {
     lineGeometry.setAttribute('position', new THREE.Float32BufferAttribute(linePositions, 3));
     lineGeometry.setAttribute('color', new THREE.Float32BufferAttribute(lineColors, 3));
     
-    return { points, lineGeometry };
+    return { points, lineGeometry, faceGeometries };
   }, [radius]);
   
   useFrame((state) => {
     // Gentle rotation sync with the sphere
-    if (pointsRef.current && linesRef.current) {
+    if (pointsRef.current && linesRef.current && facesRef.current) {
       pointsRef.current.rotation.y += 0.002;
       linesRef.current.rotation.y += 0.002;
+      facesRef.current.rotation.y += 0.002;
     }
   });
 
   return (
     <>
+      {/* Render polygon faces */}
+      <group ref={facesRef}>
+        {network.faceGeometries.map((face, index) => (
+          <mesh key={index}>
+            <bufferGeometry attach="geometry" {...face.geometry} />
+            <meshStandardMaterial 
+              attach="material" 
+              vertexColors={true}
+              transparent={true}
+              opacity={0.6}
+              side={THREE.DoubleSide}
+            />
+          </mesh>
+        ))}
+      </group>
+      
       {/* Render points */}
       <group ref={pointsRef}>
         {network.points.map((point, index) => (
           <mesh key={index} position={point.position}>
-            <sphereGeometry args={[0.05, 16, 16]} />
+            <sphereGeometry args={[0.08, 16, 16]} />
             <meshStandardMaterial color={point.color} />
           </mesh>
         ))}
@@ -155,7 +215,7 @@ const GeodesicNetwork = ({ radius = 1.5 }: { radius?: number }) => {
       <group ref={linesRef}>
         <lineSegments>
           <bufferGeometry attach="geometry" {...network.lineGeometry} />
-          <lineBasicMaterial attach="material" vertexColors={true} linewidth={2} />
+          <lineBasicMaterial attach="material" vertexColors={true} linewidth={4} />
         </lineSegments>
       </group>
     </>

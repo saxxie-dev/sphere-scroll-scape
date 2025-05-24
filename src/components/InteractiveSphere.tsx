@@ -24,7 +24,7 @@ const AnimatedSphere = () => {
         metalness={0.7}
         wireframe={false}
         transparent={true}
-        opacity={0.3}
+        opacity={0.7}
       />
     </mesh>
   );
