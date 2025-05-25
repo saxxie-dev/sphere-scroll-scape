@@ -12,7 +12,7 @@ interface Point {
 const GeodesicNetwork = ({ radius = 1.5 }: { radius?: number }) => {
   const pointsRef = useRef<THREE.Group>(null);
   const linesRef = useRef<THREE.Group>(null);
-  const facesRef = useRef<THREE.Group>(null);
+  const patchesRef = useRef<THREE.Group>(null);
   
   // Generate geodesic curve points between two points on sphere surface
   const generateGeodesicCurve = (point1: THREE.Vector3, point2: THREE.Vector3, segments = 20) => {
@@ -42,6 +42,86 @@ const GeodesicNetwork = ({ radius = 1.5 }: { radius?: number }) => {
     }
     
     return points;
+  };
+
+  // Generate spherical patch geometry for a region bounded by geodesics
+  const createSphericalPatch = (centerPoint: THREE.Vector3, neighborPoints: THREE.Vector3[], color: THREE.Color) => {
+    const vertices: number[] = [];
+    const colors: number[] = [];
+    const uvs: number[] = [];
+    
+    // Create a spherical patch by subdividing the surface
+    const segments = 16;
+    
+    // Sort neighbors by angle around center to create proper ordering
+    const sortedNeighbors = neighborPoints.map(pos => ({
+      position: pos,
+      angle: Math.atan2(
+        pos.clone().cross(centerPoint).length(),
+        pos.clone().dot(centerPoint)
+      )
+    })).sort((a, b) => a.angle - b.angle).map(item => item.position);
+    
+    // Create triangular patches from center to each pair of adjacent neighbors
+    for (let i = 0; i < sortedNeighbors.length; i++) {
+      const neighbor1 = sortedNeighbors[i];
+      const neighbor2 = sortedNeighbors[(i + 1) % sortedNeighbors.length];
+      
+      // Subdivide the spherical triangle for smoother surface
+      for (let u = 0; u < segments; u++) {
+        for (let v = 0; v < segments - u; v++) {
+          const u1 = u / segments;
+          const v1 = v / segments;
+          const w1 = 1 - u1 - v1;
+          
+          const u2 = (u + 1) / segments;
+          const v2 = v / segments;
+          const w2 = 1 - u2 - v2;
+          
+          const u3 = u / segments;
+          const v3 = (v + 1) / segments;
+          const w3 = 1 - u3 - v3;
+          
+          if (w1 >= 0 && w2 >= 0 && w3 >= 0) {
+            // Barycentric interpolation on sphere surface
+            const p1 = centerPoint.clone().multiplyScalar(w1)
+              .add(neighbor1.clone().multiplyScalar(u1))
+              .add(neighbor2.clone().multiplyScalar(v1))
+              .normalize().multiplyScalar(radius);
+              
+            const p2 = centerPoint.clone().multiplyScalar(w2)
+              .add(neighbor1.clone().multiplyScalar(u2))
+              .add(neighbor2.clone().multiplyScalar(v2))
+              .normalize().multiplyScalar(radius);
+              
+            const p3 = centerPoint.clone().multiplyScalar(w3)
+              .add(neighbor1.clone().multiplyScalar(u3))
+              .add(neighbor2.clone().multiplyScalar(v3))
+              .normalize().multiplyScalar(radius);
+            
+            vertices.push(p1.x, p1.y, p1.z);
+            vertices.push(p2.x, p2.y, p2.z);
+            vertices.push(p3.x, p3.y, p3.z);
+            
+            // Add colors
+            for (let k = 0; k < 3; k++) {
+              colors.push(color.r, color.g, color.b);
+            }
+            
+            // Add UV coordinates
+            uvs.push(u1, v1, u2, v2, u3, v3);
+          }
+        }
+      }
+    }
+    
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+    geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+    geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+    geometry.computeVertexNormals();
+    
+    return geometry;
   };
 
   // Generate evenly distributed points using Fibonacci sphere algorithm
@@ -93,46 +173,15 @@ const GeodesicNetwork = ({ radius = 1.5 }: { radius?: number }) => {
     const linePositions: number[] = [];
     const lineColors: number[] = [];
     
-    // Create polygon faces
-    const faceGeometries: { geometry: THREE.BufferGeometry; color: THREE.Color }[] = [];
+    // Create spherical surface patches
+    const patchGeometries: { geometry: THREE.BufferGeometry; color: THREE.Color }[] = [];
     
     points.forEach((point, i) => {
-      // Create polygon face for each point's neighborhood
+      // Create spherical patch for each point's neighborhood
       if (point.neighbors.length >= 3) {
-        const faceVertices: number[] = [];
-        const faceColors: number[] = [];
-        
-        // Sort neighbors by angle around the point to create proper polygon
-        const neighborPositions = point.neighbors.map(ni => ({
-          index: ni,
-          position: points[ni].position.clone().sub(point.position).normalize()
-        }));
-        
-        // Create triangulated face from center point to neighbors
-        for (let j = 0; j < point.neighbors.length; j++) {
-          const nextJ = (j + 1) % point.neighbors.length;
-          const neighbor1 = points[point.neighbors[j]];
-          const neighbor2 = points[point.neighbors[nextJ]];
-          
-          // Triangle: center -> neighbor1 -> neighbor2
-          faceVertices.push(
-            point.position.x, point.position.y, point.position.z,
-            neighbor1.position.x, neighbor1.position.y, neighbor1.position.z,
-            neighbor2.position.x, neighbor2.position.y, neighbor2.position.z
-          );
-          
-          // Use point's color for the entire face
-          for (let k = 0; k < 3; k++) {
-            faceColors.push(point.color.r, point.color.g, point.color.b);
-          }
-        }
-        
-        const faceGeometry = new THREE.BufferGeometry();
-        faceGeometry.setAttribute('position', new THREE.Float32BufferAttribute(faceVertices, 3));
-        faceGeometry.setAttribute('color', new THREE.Float32BufferAttribute(faceColors, 3));
-        faceGeometry.computeVertexNormals();
-        
-        faceGeometries.push({ geometry: faceGeometry, color: point.color });
+        const neighborPositions = point.neighbors.map(ni => points[ni].position);
+        const patchGeometry = createSphericalPatch(point.position, neighborPositions, point.color);
+        patchGeometries.push({ geometry: patchGeometry, color: point.color });
       }
       
       // Create lines
@@ -171,30 +220,30 @@ const GeodesicNetwork = ({ radius = 1.5 }: { radius?: number }) => {
     lineGeometry.setAttribute('position', new THREE.Float32BufferAttribute(linePositions, 3));
     lineGeometry.setAttribute('color', new THREE.Float32BufferAttribute(lineColors, 3));
     
-    return { points, lineGeometry, faceGeometries };
+    return { points, lineGeometry, patchGeometries };
   }, [radius]);
   
   useFrame((state) => {
     // Gentle rotation sync with the sphere
-    if (pointsRef.current && linesRef.current && facesRef.current) {
+    if (pointsRef.current && linesRef.current && patchesRef.current) {
       pointsRef.current.rotation.y += 0.002;
       linesRef.current.rotation.y += 0.002;
-      facesRef.current.rotation.y += 0.002;
+      patchesRef.current.rotation.y += 0.002;
     }
   });
 
   return (
     <>
-      {/* Render polygon faces */}
-      <group ref={facesRef}>
-        {network.faceGeometries.map((face, index) => (
+      {/* Render spherical surface patches */}
+      <group ref={patchesRef}>
+        {network.patchGeometries.map((patch, index) => (
           <mesh key={index}>
-            <bufferGeometry attach="geometry" {...face.geometry} />
+            <bufferGeometry attach="geometry" {...patch.geometry} />
             <meshStandardMaterial 
               attach="material" 
               vertexColors={true}
               transparent={true}
-              opacity={0.6}
+              opacity={0.8}
               side={THREE.DoubleSide}
             />
           </mesh>
